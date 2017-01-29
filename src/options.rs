@@ -7,11 +7,20 @@ pub enum By {
     Crate,
 }
 
+pub enum Bundle {
+    Inline {
+        file: Option<String>,
+    }
+}
+
 pub enum Cmd {
     List {
         by: By
     },
     Check,
+    Bundle {
+        variant: Bundle,
+    },
 }
 
 pub struct Options {
@@ -22,6 +31,32 @@ pub struct Options {
     pub frozen: bool,
     pub locked: bool,
     pub cmd: Cmd,
+}
+
+impl Bundle {
+    pub fn args() -> Vec<Arg<'static, 'static>> {
+        vec![
+            Arg::with_name("variant")
+                .long("variant")
+                .takes_value(true)
+                .possible_value("inline")
+                .default_value("inline")
+                .help("What sort of bundle to produce"),
+            Arg::with_name("file")
+                .long("file")
+                .takes_value(true).value_name("FILE")
+                .help("The file to output to (standard out if not specified)"),
+        ]
+    }
+
+    pub fn from_matches(matches: &ArgMatches) -> Bundle {
+        match matches.value_of("variant").expect("defaulted") {
+            "inline" => Bundle::Inline {
+                file: matches.value_of("file").map(ToOwned::to_owned),
+            },
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl Options {
@@ -99,11 +134,14 @@ impl Options {
                         .possible_values(&["license", "crate"])
                         .default_value("license")
                         .help("Whether to list crates per license or licenses per crate")
-                ])
+                ]),
+            SubCommand::with_name("bundle")
+                .about("Bundle all dependencies licenses ready for distribution")
+                .args(&Bundle::args()),
         ]
     }
 
-    pub fn from_matches(matches: ArgMatches) -> Options {
+    pub fn from_matches(matches: &ArgMatches) -> Options {
         let matches = matches.subcommand_matches("lichking").expect("required");
         Options {
             verbose: matches.occurrences_of("verbose") as u32,
@@ -120,6 +158,11 @@ impl Options {
                             .expect("defaulted")
                             .parse()
                             .expect("constrained"),
+                    }
+                }
+                ("bundle", Some(matches)) => {
+                    Cmd::Bundle {
+                        variant: Bundle::from_matches(matches),
                     }
                 }
                 (_, _) => {
