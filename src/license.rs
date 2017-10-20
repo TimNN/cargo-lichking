@@ -1,6 +1,7 @@
 use std::fmt;
-use std::str::FromStr;
 use std::path::PathBuf;
+use std::str::FromStr;
+
 use void::Void;
 
 #[derive(Eq, PartialEq, Hash, Ord, PartialOrd, Debug)]
@@ -117,6 +118,31 @@ impl License {
         });
 
         Some(false)
+    }
+
+    pub fn template(&self) -> Option<&'static str> {
+        Some(match *self {
+            License::MIT           => include_str!("licenses/MIT"),
+            License::X11           => { return None }
+            License::BSD_3_Clause  => { return None }
+            License::Apache_2_0    => include_str!("licenses/Apache-2.0"),
+            License::LGPL_2_0      => { return None }
+            License::LGPL_2_1      => { return None }
+            License::LGPL_2_1Plus  => { return None }
+            License::LGPL_3_0      => { return None }
+            License::LGPL_3_0Plus  => { return None }
+            License::MPL_1_1       => { return None }
+            License::MPL_2_0       => { return None }
+            License::GPL_2_0       => { return None }
+            License::GPL_2_0Plus   => { return None }
+            License::GPL_3_0       => { return None }
+            License::GPL_3_0Plus   => { return None }
+            License::AGPL_3_0      => { return None }
+            License::Custom(_)     => { return None }
+            License::File(_)       => { return None }
+            License::Multiple(_)   => { panic!("TODO: Refactor multiple handling") }
+            License::Unspecified   => { return None }
+        })
     }
 }
 

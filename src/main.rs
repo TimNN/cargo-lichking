@@ -1,6 +1,7 @@
 #[macro_use] extern crate clap;
 extern crate cargo;
 extern crate void;
+extern crate strsim;
 
 mod bundle;
 mod check;

@@ -1,18 +1,15 @@
 [package]
-name = "cargo-lichking"
-version = "0.5.3"
 authors = ["Wim Looman <wim@nemo157.com>"]
-
 description = "Display info about licensing of dependencies"
-
-repository = "https://github.com/Nemo157/cargo-lichking"
-
-readme = "README.md"
 keywords = ["cargo", "licensing"]
-
 license = "MIT/Apache-2.0"
+name = "cargo-lichking"
+readme = "README.md"
+repository = "https://github.com/Nemo157/cargo-lichking"
+version = "0.5.3"
 
 [dependencies]
 cargo = "0.18"
-void = "1.0"
 clap = "2.20"
+strsim = "0.6.0"
+void = "1.0"

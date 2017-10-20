@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use cargo::{human, Config, CargoResult};
 use cargo::core::{MultiShell, Package};
+use strsim::{levenshtein, osa_distance};
 
 use license::License;
 use licensed::Licensed;
@@ -199,6 +200,43 @@ fn read(path: &Path) -> CargoResult<String> {
     Ok(s)
 }
 
+// TODO: Choose something better
+const MAX_LEVENSHTEIN_RATIO: f32 = 0.1;
+
+fn normalize(text: &str) -> String {
+    text.replace("\r", " ").replace("\n", " ").replace("  ", " ").to_uppercase()
+}
+
+fn check_against_template(text: &str, license: &License) -> bool {
+    let text = normalize(text);
+    if let License::Multiple(ref licenses) = *license {
+        for license in licenses {
+            if let Some(template) = license.template() {
+                let template = normalize(template);
+                let offset = osa_distance(&text, &template);
+                let subtext = &text[offset..(offset + template.len())];
+                let score = levenshtein(subtext, &template);
+                println!("score {} / {}", score, template.len());
+                if (score as f32) / (template.len() as f32) > MAX_LEVENSHTEIN_RATIO {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        true
+    } else {
+        if let Some(template) = license.template() {
+            let template = normalize(&template);
+            let score = levenshtein(&text, &template);
+            println!("score {} / {}", score, template.len());
+            (score as f32) / (template.len() as f32) < MAX_LEVENSHTEIN_RATIO
+        } else {
+            false
+        }
+    }
+}
+
 fn find_generic_license_text(package: &Package, license: &License) -> CargoResult<Option<LicenseText>> {
     fn generic_license_name(name: &str) -> bool {
         name.to_uppercase() == "LICENSE"
@@ -213,10 +251,16 @@ fn find_generic_license_text(package: &Package, license: &License) -> CargoResul
 
         if generic_license_name(&name) {
             if let Ok(text) = read(&path) {
+                println!("checking {} against {}", path.display(), license);
+                let matches = check_against_template(&text, license);
                 return Ok(Some(LicenseText {
                     path: path,
                     text: text,
-                    confidence: Confidence::Unsure,
+                    confidence: if matches {
+                        Confidence::Confident
+                    } else {
+                        Confidence::Unsure
+                    },
                 }));
             }
         }
@@ -251,10 +295,16 @@ fn find_license_text(package: &Package, license: &License) -> CargoResult<Vec<Li
 
         if name_matches(&name, license) {
             if let Ok(text) = read(&path) {
+                println!("checking {} against {}", path.display(), license);
+                let matches = check_against_template(&text, license);
                 texts.push(LicenseText {
                     path: path,
                     text: text,
-                    confidence: Confidence::SemiConfident,
+                    confidence: if matches {
+                        Confidence::Confident
+                    } else {
+                        Confidence::SemiConfident
+                    },
                 });
             }
         }
