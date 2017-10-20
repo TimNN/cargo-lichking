@@ -44,7 +44,7 @@ fn real_main(options: Options, config: &Config) -> CliResult {
         Cmd::List { by } => {
             list::run(packages, config, by)?
         }
-        Cmd::Bundle { variant } => bundle::run(root, packages, variant)?,
+        Cmd::Bundle { variant } => bundle::run(root, packages, config, variant)?,
     }
 
     Ok(())
