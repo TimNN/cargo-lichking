@@ -28,6 +28,7 @@ struct Context<'a, 'b> {
     shell: &'b mut MultiShell,
 
     missing_license: bool,
+    low_quality_license: bool,
 }
 
 pub fn run(root: Package, mut packages: Vec<Package>, config: &Config, variant: Bundle) -> CargoResult<()> {
@@ -38,6 +39,7 @@ pub fn run(root: Package, mut packages: Vec<Package>, config: &Config, variant: 
         packages: &packages,
         shell: &mut config.shell(),
         missing_license: false,
+        low_quality_license: false,
     };
 
     match variant {
@@ -66,8 +68,14 @@ pub fn run(root: Package, mut packages: Vec<Package>, config: &Config, variant: 
   them to include the text of their license in the built packages.")?;
     }
 
-    if context.missing_license {
-        Err(human("Generating bundle failed"))
+    if context.low_quality_license {
+        context.shell.error("\
+  Our liches are very unsure about one or more licenses that were put into the \
+  bundle. Please check the specific error messages above.")?;
+    }
+
+    if context.missing_license || context.low_quality_license {
+        Err(human("Generating bundle finished with error(s)"))
     } else {
         Ok(())
     }
@@ -87,27 +95,45 @@ fn inline_package(context: &mut Context, package: &Package, mut out: &mut io::Wr
     let license = package.license();
     writeln!(out, " * {} under {}:", package.name(), license)?;
     writeln!(out, "")?;
-    match license {
-        License::Unspecified => {
-            context.shell.error(format_args!("{} does not specify a license", package.name()))?;
-        }
-        License::Multiple(licenses) => {
-            let mut first = true;
-            for license in licenses {
-                if first {
-                    first = false;
-                } else {
-                    writeln!(out, "    ===============")?;
-                    writeln!(out, "")?;
-                }
-                inline_license(context, package, &license, out)?;
-                writeln!(out, "")?;
+    if let Some(text) = find_generic_license_text(package, &license)? {
+        match text.confidence {
+            Confidence::Confident => (),
+            Confidence::SemiConfident => {
+                context.shell.warn(format_args!("{} has only a low-confidence candidate for license {}:", package.name(), license))?;
+                context.shell.warn(format_args!("    {}", text.path.display()))?;
+            }
+            Confidence::Unsure => {
+                context.shell.error(format_args!("{} has only a very low-confidence candidate for license {}:", package.name(), license))?;
+                context.shell.error(format_args!("    {}", text.path.display()))?;
             }
         }
-        license => {
-            inline_license(context, package, &license, out)?;
+        for line in text.text.lines() {
+            writeln!(out, "    {}", line)?;
+        }
+    } else {
+        match license {
+            License::Unspecified => {
+                context.shell.error(format_args!("{} does not specify a license", package.name()))?;
+            }
+            License::Multiple(licenses) => {
+                let mut first = true;
+                for license in licenses {
+                    if first {
+                        first = false;
+                    } else {
+                        writeln!(out, "")?;
+                        writeln!(out, "    ===============")?;
+                        writeln!(out, "")?;
+                    }
+                    inline_license(context, package, &license, out)?;
+                }
+            }
+            license => {
+                inline_license(context, package, &license, out)?;
+            }
         }
     }
+    writeln!(out, "")?;
     Ok(())
 }
 
@@ -130,31 +156,34 @@ fn choose(context: &mut Context, package: &Package, license: &License, texts: Ve
     } else if confident.len() > 1 {
         context.shell.error(format_args!("{} has multiple candidates for license {}:", package.name(), license))?;
         for text in &confident {
-            context.shell.error(format_args!("    {}", text.path.strip_prefix(package.root()).unwrap().display()))?;
+            context.shell.error(format_args!("    {}", text.path.display()))?;
         }
         return Ok(Some(confident.swap_remove(0)));
     }
 
     if semi_confident.len() == 1 {
         context.shell.warn(format_args!("{} has only a low-confidence candidate for license {}:", package.name(), license))?;
-        context.shell.warn(format_args!("    {}", semi_confident[0].path.strip_prefix(package.root()).unwrap().display()))?;
+        context.shell.warn(format_args!("    {}", semi_confident[0].path.display()))?;
         return Ok(Some(semi_confident.swap_remove(0)));
     } else if semi_confident.len() > 1 {
+        context.low_quality_license = true;
         context.shell.error(format_args!("{} has multiple low-confidence candidates for license {}:", package.name(), license))?;
         for text in &semi_confident {
-            context.shell.error(format_args!("    {}", text.path.strip_prefix(package.root()).unwrap().display()))?;
+            context.shell.error(format_args!("    {}", text.path.display()))?;
         }
         return Ok(Some(semi_confident.swap_remove(0)));
     }
 
     if unconfident.len() == 1 {
+        context.low_quality_license = true;
         context.shell.warn(format_args!("{} has only a very low-confidence candidate for license {}:", package.name(), license))?;
-        context.shell.warn(format_args!("    {}", unconfident[0].path.strip_prefix(package.root()).unwrap().display()))?;
+        context.shell.warn(format_args!("    {}", unconfident[0].path.display()))?;
         return Ok(Some(unconfident.swap_remove(0)));
     } else if unconfident.len() > 1 {
+        context.low_quality_license = true;
         context.shell.error(format_args!("{} has multiple very low-confidence candidates for license {}:", package.name(), license))?;
         for text in &unconfident {
-            context.shell.error(format_args!("    {}", text.path.strip_prefix(package.root()).unwrap().display()))?;
+            context.shell.error(format_args!("    {}", text.path.display()))?;
         }
         return Ok(Some(unconfident.swap_remove(0)));
     }
@@ -162,6 +191,38 @@ fn choose(context: &mut Context, package: &Package, license: &License, texts: Ve
     context.shell.error(format_args!("{} has no candidate texts for license {} in {}", package.name(), license, package.root().display()))?;
     context.missing_license = true;
     return Ok(None);
+}
+
+fn read(path: &Path) -> CargoResult<String> {
+    let mut s = String::new();
+    File::open(path)?.read_to_string(&mut s)?;
+    Ok(s)
+}
+
+fn find_generic_license_text(package: &Package, license: &License) -> CargoResult<Option<LicenseText>> {
+    fn generic_license_name(name: &str) -> bool {
+        name.to_uppercase() == "LICENSE"
+            || name.to_uppercase() == "LICENSE.MD"
+            || name.to_uppercase() == "LICENSE.TXT"
+    }
+
+    for entry in fs::read_dir(package.root())? {
+        let entry = entry?;
+        let path = entry.path().to_owned();
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        if generic_license_name(&name) {
+            if let Ok(text) = read(&path) {
+                return Ok(Some(LicenseText {
+                    path: path,
+                    text: text,
+                    confidence: Confidence::Unsure,
+                }));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn find_license_text(package: &Package, license: &License) -> CargoResult<Vec<LicenseText>> {
@@ -182,10 +243,6 @@ fn find_license_text(package: &Package, license: &License) -> CargoResult<Vec<Li
         }
     }
 
-    fn generic_license_name(name: &str) -> bool {
-        name.to_uppercase() == "LICENSE" || name.to_uppercase() == "LICENSE.MD"
-    }
-
     let mut texts = Vec::new();
     for entry in fs::read_dir(package.root())? {
         let entry = entry?;
@@ -198,14 +255,6 @@ fn find_license_text(package: &Package, license: &License) -> CargoResult<Vec<Li
                     path: path,
                     text: text,
                     confidence: Confidence::SemiConfident,
-                });
-            }
-        } else if generic_license_name(&name) {
-            if let Ok(text) = read(&path) {
-                texts.push(LicenseText {
-                    path: path,
-                    text: text,
-                    confidence: Confidence::Unsure,
                 });
             }
         }
