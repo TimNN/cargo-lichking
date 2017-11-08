@@ -1,6 +1,6 @@
 [package]
 name = "cargo-lichking"
-version = "0.5.3"
+version = "0.5.4"
 authors = ["Wim Looman <wim@nemo157.com>"]
 
 description = "Display info about licensing of dependencies"
